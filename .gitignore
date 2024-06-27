@@ -1,0 +1,6 @@
+.idea
+.venv
+backuper/BACKUPER*.sql
+analyzer/ANALYZER*.txt
+.env
+patroni/*

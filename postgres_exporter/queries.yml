@@ -1,0 +1,14 @@
+pg_visitors:
+  query: |
+    select count(*) from visitor where date >= current_date - interval '1' year and date < current_date;
+  metrics:
+    - count:
+        usage: "GAUGE"
+        description: "Visitors last year"
+pg_authors:
+  query: |
+    select count(*) from author;
+  metrics:
+    - count:
+        usage: "GAUGE"
+        description: "Authors amount"

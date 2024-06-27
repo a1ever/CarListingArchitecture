@@ -1,0 +1,156 @@
+version: "3"
+
+networks:
+    demo:
+
+services:
+  etcd1: &etcd
+      image: ${PATRONI_TEST_IMAGE:-patroni}
+      networks: [ demo ]
+      environment:
+          ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+          ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+          ETCD_INITIAL_CLUSTER: etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+          ETCD_INITIAL_CLUSTER_STATE: new
+          ETCD_INITIAL_CLUSTER_TOKEN: tutorial
+          ETCD_UNSUPPORTED_ARCH: arm64
+      container_name: demo-etcd1
+      hostname: etcd1
+      command: etcd --name etcd1 --initial-advertise-peer-urls http://etcd1:2380
+
+  etcd2:
+      <<: *etcd
+      container_name: demo-etcd2
+      hostname: etcd2
+      command: etcd --name etcd2 --initial-advertise-peer-urls http://etcd2:2380
+
+  etcd3:
+      <<: *etcd
+      container_name: demo-etcd3
+      hostname: etcd3
+      command: etcd --name etcd3 --initial-advertise-peer-urls http://etcd3:2380
+
+  haproxy:
+      image: ${PATRONI_TEST_IMAGE:-patroni}
+      networks: [ demo ]
+      env_file: patroni/docker/patroni.env
+      hostname: haproxy
+      container_name: demo-haproxy
+      ports:
+          - "5000:5000"
+          - "5001:5001"
+      command: haproxy
+      environment: &haproxy_env
+          ETCDCTL_ENDPOINTS: http://etcd1:2379,http://etcd2:2379,http://etcd3:2379
+          PATRONI_ETCD3_HOSTS: "'etcd1:2379','etcd2:2379','etcd3:2379'"
+          PATRONI_SCOPE: demo
+
+  patroni1:
+      image: ${PATRONI_TEST_IMAGE:-patroni}
+      networks: [ demo ]
+      env_file: patroni/docker/patroni.env
+      hostname: patroni1
+      container_name: demo-patroni1
+      environment:
+          <<: *haproxy_env
+          PATRONI_NAME: patroni1
+
+  patroni2:
+      image: ${PATRONI_TEST_IMAGE:-patroni}
+      networks: [ demo ]
+      env_file: patroni/docker/patroni.env
+      hostname: patroni2
+      container_name: demo-patroni2
+      environment:
+          <<: *haproxy_env
+          PATRONI_NAME: patroni2
+      volumes:
+        - ./backuper/BACKUPER_2024-05-27_10-10-50.sql:/src/BACKUP.sql
+
+  patroni3:
+      image: ${PATRONI_TEST_IMAGE:-patroni}
+      networks: [ demo ]
+      env_file: patroni/docker/patroni.env
+      hostname: patroni3
+      container_name: demo-patroni3
+      environment:
+          <<: *haproxy_env
+          PATRONI_NAME: patroni3
+  db:
+    image: postgres:latest
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USERNAME}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    env_file:
+      - .env
+    ports:
+      - "${DB_PORT_TO_WORLD}:${DB_PORT}"
+    volumes:
+      - .env:/config/environment
+      - ./database:/database/
+      - ./init_scripts:/docker-entrypoint-initdb.d/
+  app:
+    build: ./data_generator
+    env_file:
+      - .env
+    depends_on:
+      - db
+    volumes:
+      - ./data_generator:/src
+
+  analyzer:
+    build: ./analyzer
+    env_file:
+      - .env
+    depends_on:
+      - db
+    volumes:
+      - ./analyzer:/src
+
+  backuper:
+    build: ./backuper
+    env_file:
+      - .env
+    depends_on:
+      - db
+    volumes:
+      - ./backuper:/src
+
+  postgres_exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    container_name: postgres_exporter
+    volumes:
+      - ./postgres_exporter/queries.yml:/src/queries.yml
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=disable"
+      PG_EXPORTER_EXTEND_QUERY_PATH: ./src/queries.yml
+    ports:
+      - "9187:9187"
+    depends_on:
+      - db
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - prometheus_data:/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:
